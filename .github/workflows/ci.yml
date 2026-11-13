@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_llm_eval:
+        description: "Прогнать LLM-агента по кейсам (нужен секрет ANTHROPIC_API_KEY)"
+        type: boolean
+        default: false
+      model:
+        description: "Модель (пусто = по умолчанию)"
+        required: false
+        default: ""
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Синтетический мир
+        run: python -m synth.generate
+      - name: Тесты
+        run: python -m pytest -q
+      - name: Агентный eval (эталонный скрипт)
+        run: python eval/run_agent_eval.py --agent scripted
+      - name: Мини-бенчмарк инструментов
+        run: python eval/run_eval.py --worlds 10 --ab-per-kind 6
+
+  llm-eval:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_llm_eval
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m synth.generate
+      - name: LLM-агент по кейсам
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python eval/run_agent_eval.py --agent llm ${{ inputs.model && format('--model {0}', inputs.model) || '' }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: llm-eval-runs
+          path: eval/runs/

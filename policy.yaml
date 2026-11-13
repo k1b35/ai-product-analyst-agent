@@ -1,0 +1,61 @@
+# Политика доступа агента. Автономность задаётся уровнями.
+# auto     - агент делает сам
+# approval - только после подтверждения человеком из списка approvers (Telegram)
+# deny     - запрещено
+autonomy:
+  t0_read: auto          # read-only SQL, метрики, A/B-проверки, отчёты, алерты
+  t1_sandbox: auto       # файлы в workspace/, реестр гипотез
+  t2_pipelines: auto     # пайплайны из allowlist (идемпотентные)
+  t3_prod: approval      # запись в прод, DDL, запуск/остановка экспериментов, внешние рассылки
+
+sql:
+  max_rows: 10000
+  timeout_s: 30
+
+workspace: workspace
+allowed_extensions: [".sql", ".py", ".md", ".yaml", ".json", ".csv", ".txt"]
+max_file_bytes: 200000
+
+pipelines:
+  build_metrics:                 # пересборка витрин daily_metrics* из сырых daily_activity
+    cmd: ["python", "-m", "synth.build_metrics"]
+    idempotent: true
+    min_interval_minutes: 10
+
+telegram:
+  chat_id_env: TELEGRAM_CHAT_ID
+  token_env: TELEGRAM_BOT_TOKEN
+  approvers: [111111111]        # user id в Telegram, которым разрешено подтверждать T3
+  alert_cooldown_hours: 12
+  max_messages_per_hour: 20
+
+# Каталог метрик: SQL должен вернуть колонки date, value (и segment для drill-down)
+metrics:
+  - name: dau
+    sql: "SELECT date, value FROM daily_metrics WHERE metric = 'dau' ORDER BY date"
+    segment_sql: "SELECT date, platform AS segment, value FROM daily_metrics_by_platform WHERE metric = 'dau' ORDER BY date"
+    bad_direction: down
+    warn_pct: 10
+    critical_pct: 25
+    owner: product
+  - name: conversion_rate          # доля активных за день, совершивших сделку
+    sql: "SELECT date, value FROM daily_metrics WHERE metric = 'conversion_rate' ORDER BY date"
+    bad_direction: down
+    warn_pct: 8
+    critical_pct: 20
+    owner: growth
+  - name: revenue
+    sql: "SELECT date, value FROM daily_metrics WHERE metric = 'revenue' ORDER BY date"
+    segment_sql: "SELECT date, platform AS segment, value FROM daily_metrics_by_platform WHERE metric = 'revenue' ORDER BY date"
+    bad_direction: down
+    warn_pct: 20
+    critical_pct: 35
+    owner: finance
+
+data_checks:
+  - name: raw_activity_freshness
+    sql: "SELECT MAX(date) AS last_date FROM daily_activity"
+    max_lag_days: 1
+  - name: aggregates_freshness     # витрины, на которых строятся метрики
+    sql: "SELECT MAX(date) AS last_date FROM daily_metrics"
+    max_lag_days: 1

@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.env
+data/
+*.db
+audit.jsonl
+eval/runs/
+workspace/*
+!workspace/.gitkeep
+.DS_Store
